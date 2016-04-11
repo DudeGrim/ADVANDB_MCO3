@@ -1,49 +1,48 @@
 package transaction;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.sql.Connection;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Savepoint;
 
 import network.Server;
-import view.ResultFrame;
+import view.TransactionFrame;
 
 public class Transaction extends Thread implements TransactionInterface{
 	private Connection db;
 	private String statements;
 	private Savepoint start;
 	
-	private boolean rollbacked;
-	private int currentStep;
 	private String[] tables;
 	
-	String name;
-	String ipadd;
-	final int PORT = 1996;
-    InputStreamReader input;
-    BufferedReader inFromServer;
+	private TransactionFrame frame;
+	private boolean hasFrame;
     
+    private Server server;
     
-    String message = "initial";
-   // Socket socket;
-    ResultSet rs;
-    Server server;
-//    BufferedReader bufferedReaderFromClient;
-//    PrintWriter printWriter;
-//    BufferedReader bufferedReaderFromCommandPrompt;
-//    String readerInput, ip;
-//    Thread MST,MRT;
-//    Thread main;
-    
-//    DataOutputStream out;
-//    DataInputStream in;
 	public Transaction(String statements, String[] tables, int isoLevel, Connection db, Server server) throws SQLException {
-		
+		this.hasFrame = false;
 		this.db = db;
 		this.server = server;
+		
+		try {
+			db.setAutoCommit(false);
+			db.setTransactionIsolation(isoLevel);
+			
+			this.statements = statements;
+			this.tables = tables;
+		} catch (SQLException err) {
+			err.printStackTrace();
+			db.setAutoCommit(true);
+		}
+	}
+
+	public Transaction(String statements, String[] tables, int isoLevel, Connection db, Server server, TransactionFrame frame) throws SQLException {
+		this.frame = frame;
+		this.hasFrame = true;
+		this.db = db;
+		this.server = server;
+		
 		try {
 			db.setAutoCommit(false);
 			db.setTransactionIsolation(isoLevel);
@@ -51,38 +50,28 @@ public class Transaction extends Thread implements TransactionInterface{
 			
 			this.statements = statements;
 			this.tables = tables;
-			this.currentStep = 0;
-			this.rollbacked = false;
 		} catch (SQLException err) {
 			err.printStackTrace();
 			db.setAutoCommit(true);
 		}
 	}
 	
-	
-	public void run() {
-		 
-	     /*  try {
-	          // socket = new Socket(ipadd, PORT);	           
-	           in = new DataInputStream(socket.getInputStream());
-	           out = new DataOutputStream(socket.getOutputStream());
-	  
-	       } catch (ConnectException connectException) {
-	           System.out.println(connectException.getMessage());
-	       } catch (UnknownHostException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			} catch (IOException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}*/
+	public void display(String msg) {
+		if(hasFrame) {
+			frame.display(msg + "\n");
+		}
 		
+		System.out.println(msg);
+	}
+
+	
+	public void run() {	
 		begin();		
 	}
 	
 	public void begin() {
 		try {
-			System.out.println("START TRANSACTION;");
+			display("START TRANSACTION;");
 			start = db.setSavepoint();
 			db.prepareStatement("START TRANSACTION;").executeQuery();
 			if(lock(tables, "READ") == true){
@@ -94,9 +83,9 @@ public class Transaction extends Thread implements TransactionInterface{
 				}else{
 					try {
 						rollback();
-						System.out.println("rollback");
+						display("ROLLBACK");
 					} catch (InterruptedException e) {
-						// TODO Auto-generated catch block
+					
 						e.printStackTrace();
 					}
 				}
@@ -115,35 +104,6 @@ public class Transaction extends Thread implements TransactionInterface{
 		}
 	}
 	
-	/*public boolean hasNext() {
-		if(currentStep < statements.length) {
-			return true;
-		} 
-		
-		return false;
-	}
-	
-	public String next() {
-		String ret = "";
-		
-		try {
-			ret =  statements[currentStep];
-			db.prepareStatement(ret).execute();
-			currentStep++;
-			
-		} catch(SQLException err) {
-			err.printStackTrace();
-			try {
-				rollback();
-			} catch (SQLException | InterruptedException e) {
-				e.printStackTrace();
-			}
-		}
-		
-		return ret;
-	}*/
-	
-	
 	public synchronized boolean lock(String[] tables, String lockType){
 		//requests for lock on the table 
 		String lock = "LOCK TABLES ";
@@ -160,50 +120,49 @@ public class Transaction extends Thread implements TransactionInterface{
 		try {
 			db.prepareStatement(lock).executeQuery();
 		} catch (SQLException e) {
-			// TODO Auto-generated catch block
+		
 			locked = false;
 			e.printStackTrace();
 		}
 		try {
-			System.out.println("LOCK: " + lock);
+			display("LOCK: " + lock);
 			server.sendToAll("LOCK:" + lock);
 		
 			try {
 				wait();
 			} catch (InterruptedException e) {
-				// TODO Auto-generated catch block
+			
 				e.printStackTrace();
 			}
 			String k = server.getAcknowledgement();
 			
-//			System.out.println(k);
 			if(k.equals("LOCKED SUCCESSFUL"))
 				locked = true;
 			else locked = false;			
 			
         } catch (IOException e) {
-			// TODO Auto-generated catch block
+		
         	locked = false;
 			e.printStackTrace();
 		}
+		
         return locked;
 
 	}
 	
 	public void doSQL(String sql){
-		//sql processing\
 		try {
-			System.out.println("SQL:" + sql);
+			display("SQL:" + sql);
 			server.sendToAll("SQL:" + sql);
 		} catch (IOException e1) {
-			// TODO Auto-generated catch block
+		
 			e1.printStackTrace();
 		}
 		
 		try {	
-			rs = db.prepareStatement(sql).executeQuery();
+			db.prepareStatement(sql).executeQuery();
 		} catch (SQLException e) {
-			// TODO Auto-generated catch block
+		
 			e.printStackTrace();
 		}
 	}
@@ -212,10 +171,9 @@ public class Transaction extends Thread implements TransactionInterface{
 		//send to other nodes that I am ready
 		boolean ready;
 		try {
-//			System.out.println("READY");
+			display("READY");
 			server.sendToAll("READY");
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 			ready = false;
 		}
@@ -225,12 +183,10 @@ public class Transaction extends Thread implements TransactionInterface{
 		} catch (InterruptedException er) {}
 		
 		String k = server.getAcknowledgement();
-//		System.out.println(k);
 		
 		if(k.equals("READY"))
 			ready = true;
 		else ready = false;
-	
 		
 		return ready;
 	}
@@ -238,32 +194,25 @@ public class Transaction extends Thread implements TransactionInterface{
 	public void unlock(){
 		//Unlock all tables
 		try {
+			display("UNLOCK TABLES");
 			db.prepareStatement("UNLOCK TABLES").executeQuery();
 			try {
 				server.sendToAll("UNLOCK TABLES");
 			} catch (IOException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 			
 		} catch (SQLException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
 	}
 	
 	public void end(){
 		try {
+			display("END");
 			server.sendToAll("END");
 			
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		try {
-			new ResultFrame(statements, String.valueOf(0), rs);
-		} catch (SQLException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
 	}
@@ -272,15 +221,12 @@ public class Transaction extends Thread implements TransactionInterface{
 	public void commit() {
 		try {
 			try {
-				System.out.println("COMMIT");
+				display("COMMIT");
 				server.sendToAll("COMMIT");
 			} catch (IOException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 			db.commit();
-			//db.prepareStatement("UNLOCK TABLES").executeQuery();
-//			db.setAutoCommit(true);
 		} catch (SQLException err) {
 			err.printStackTrace();
 			try {
@@ -296,12 +242,12 @@ public class Transaction extends Thread implements TransactionInterface{
 	@Override
 	public void rollback() throws SQLException, InterruptedException {
 		db.rollback(start);
-		System.out.println("UNLOCK TABLES;");
-		System.out.println("ROLLBACK;");
+		display("UNLOCK TABLES;");
+		display("ROLLBACK;");
 		
 		db.prepareStatement("UNLOCK TABLES").executeQuery();
+		db.rollback();
 		db.setAutoCommit(true);	
-		rollbacked = true;
 		
 		throw new InterruptedException();
 	}
@@ -309,18 +255,10 @@ public class Transaction extends Thread implements TransactionInterface{
 	public synchronized void notifyTrans() {
 		notify();
 	}
-	/*public boolean isWriteTransaction(){
-		for(String s:statements){
-			if(s.contains("UPDATE") || s.contains("DELETE") || s.contains("INSERT")){
-				return true;
-			} 
-		}
-		return false;
-	}*/
 
-
-	
-	
-	
-	 
+	public void setDisplay(TransactionFrame frame) {
+		this.frame = frame;
+		this.hasFrame = true;
+		
+	}
 }

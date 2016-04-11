@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.UnknownHostException;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -20,87 +19,134 @@ import com.mysql.jdbc.Connection;
 
 import transaction.Transaction;
 import transaction.TransactionManager;
-import view.ResultFrame;
 
 public class Server extends Thread{
 	public static final int PORT = 1996;
+	public static final int CENTRAL_SERVER = 1;
+	public static final int PALAWAN_SERVER = 2;
+	public static final int MARINDUQUE_SERVER = 3;
+	
 	private TransactionManager tm;
 	private ServerSocket srvr;
 	private java.sql.Connection db;
-	private Vector<AcceptClient> list;
-	ResultSet rs;
 	private int serverNode;
-	Server thisServer;
-	ArrayList<String> ips;
-	static final int CENTRAL_SERVER = 1;
-	static final int PALAWAN_SERVER = 2;
-	static final int MARINDUQUE_SERVER = 3;
-	TransactionInput ti = new TransactionInput();
+	
+	private Server thisServer;
+	
+	private TransactionInput ti;
+	
 	private HashMap<String, AcceptClient> connected;
+	private Vector<AcceptClient> list;
 	
 	private Transaction localTrans;
 	private String ack;
 	
 	private boolean sending;
 	
-	public Server(String db_name, int serverNode) throws IOException, SQLException {
+	public Server(int serverNode, int isolationLevel, String ip) throws IOException, SQLException {
 		this.srvr = new ServerSocket(PORT);
 		this.serverNode = serverNode;
-		tm = TransactionManager.getInstance(db_name, this);
-		thisServer = this;
+		switch(serverNode){
+		case 1: 
+			this.tm = TransactionManager.getInstance("db_hpq", this);
+			break;
+		case 2: 
+			this.tm = TransactionManager.getInstance("db_hpq_palawan", this);
+			break;
+		case 3:
+			this.tm = TransactionManager.getInstance("db_hpq_marinduque", this);
+			break;
+		}
+		this.thisServer = this;
 		this.sending = false;
-		connected = new HashMap<>();
-		list = new Vector<>();
+		this.connected = new HashMap<>();
+		this.list = new Vector<>();
+		this.ti  = new TransactionInput();
+		this.db = tm.getDBConnection();
 		
-		/*if(serverNode != 1)*/
-			ti.start();
+		ti.start();		
+	}
+	
+	public void display(String msg) {
+		System.out.println(msg);
+	}
+	
+	public void run() { 
+		while(true) {
+			try {
+				Socket rcv = srvr.accept();
+				String ip = rcv.getInetAddress().getHostAddress();
+				
+				//connect to what connected to you, if not connected yet
+				if(!connected.containsKey(ip)) {
+					AcceptClient cl = new AcceptClient(new Socket(ip, PORT));
+					connected.put(ip, cl);
+					cl.start();
+				}
+				
+				AcceptClient client = new AcceptClient(rcv);
+				
+				list.add(client);
+				client.start();
+				System.out.println("Something connected.");
+			} catch (IOException err) {
+				err.printStackTrace();
+			}
+		}
+	}
+	
+	public synchronized void sendToAll(String string) throws IOException {
+		while(sending) {
+			try {
+				wait();
+			} catch (InterruptedException e) {}
+		}
 		
-		db = tm.getInstance(db_name, this).getDBConnection();	
+		sending = true;
+		Set<String> keys = connected.keySet();
+		
+		for(String key: keys) {
+			connected.get(key).send(string);
+		}
+		
+		sending = false;
+		notify();
 	}
 	
 	//gets a local transactions
 	public class TransactionInput extends Thread{
 		Scanner sc = new Scanner(System.in);
-		String statements;
-		ArrayList<String> tables = new ArrayList<>();
+		
+		String statements, ip;
+		ArrayList<String> tables;
 		int choice, isoLevel;
-		String ip;
 		Socket socket;
+		
+		public TransactionInput() {
+			tables = new ArrayList<>();
+		}
+		
 		public void run(){
 			choice = 1;
-			if(serverNode != 1){
-				System.out.println("Enter IP: ");
-				ip = sc.nextLine();
+			
+			if(serverNode != CENTRAL_SERVER){
 				try {
 					socket = new Socket(ip, PORT);
 					AcceptClient cl = new AcceptClient(socket);
 					cl.start();
 					connected.put(ip, cl);
 				} catch (UnknownHostException e1) {
-					// TODO Auto-generated catch block
 					e1.printStackTrace();
 				} catch (IOException e1) {
-					// TODO Auto-generated catch block
-					e1.printStackTrace();
+					//TODO central was down
+					display("CENTRAL is down: " + e1);
 				}	 
 			}else{
 				System.out.println("YOU ARE CENTRAL");
 				ip = "localhost";
-				/*try {
-					socket = new Socket(ips.get(0), PORT);
-					in2 = new DataInputStream(socket.getInputStream());
-			        out2 = new DataOutputStream(socket.getOutputStream());
-				} catch (UnknownHostException e1) {
-					// TODO Auto-generated catch block
-					e1.printStackTrace();
-				} catch (IOException e1) {
-					// TODO Auto-generated catch block
-					e1.printStackTrace();
-				}	*/
 			}
-			           
 	           
-			while(choice!=0){
+			while(choice != 0){
 				System.out.println("Select isolation level:");
 				System.out.println("[1]Read Committed"
 						+ "\n[2]Read Uncommited "
@@ -149,47 +195,7 @@ public class Server extends Thread{
 		}
 	}
 	
-	public void run() { 
-		while(true) {
-			try {
-				
-				Socket rcv = srvr.accept();
-				String ip = rcv.getInetAddress().getHostAddress();
-				
-				if(!connected.containsKey(ip)) {
-					AcceptClient cl = new AcceptClient(new Socket(ip, PORT));
-					connected.put(ip, cl);
-					cl.start();
-				}
-				
-				AcceptClient client = new AcceptClient(rcv);
-				
-				list.add(client);
-				client.start();
-				System.out.println("Something connected.");
-			} catch (IOException err) {
-				err.printStackTrace();
-			}
-		}
-	}
 	
-	public synchronized void sendToAll(String string) throws IOException {
-		while(sending) {
-			try {
-				wait();
-			} catch (InterruptedException e) {}
-		}
-		
-		sending = true;
-		Set<String> keys = connected.keySet();
-		
-		for(String key: keys) {
-			connected.get(key).send(string);
-		}
-		
-		sending = false;
-		notify();
-	}
 	
 	public class AcceptClient extends Thread {
 		Socket clientSocket;
@@ -197,6 +203,7 @@ public class Server extends Thread{
 		boolean sqlQuery = false;
 		String query = null;
 		boolean go = true;
+		int nodeType;
 		
 		DataInputStream in;
 		DataOutputStream out;
@@ -206,17 +213,15 @@ public class Server extends Thread{
 			in = new DataInputStream(clientSocket.getInputStream());
 			out = new DataOutputStream(clientSocket.getOutputStream());
 			
-			/*if(serverNode == 1){
-				Socket newSocket = new Socket(clientSocket.getInetAddress(), PORT);
-				in2 = new DataInputStream(newSocket.getInputStream());
-				out2 = new DataOutputStream(newSocket.getOutputStream());
-			}*/
+			this.go = true;
+			this.sqlQuery = false;
+			//tell others what node you are when you connect
+			out.write(serverNode);
+			nodeType = in.read();
 		}
 		
 		public void run() {
-			//System.out.println(clientSocket.getInetAddress());
-			ArrayList<String> statements = new ArrayList<>();
-			while(true) { // stop when transaction is done?
+			while(true) { 
 				try{
 		            String message = in.readUTF();
 		            System.out.println(message);
@@ -225,50 +230,41 @@ public class Server extends Thread{
 					
 					switch(protocol){
 					case "LOCK":
-						lock(st.nextToken());break;	
+						lock(st.nextToken()); break;	
 					case "SQL":
-						doSQL(st.nextToken());break;
+						doSQL(st.nextToken()); break;
 					case "READY":
 						ready(); break;
 					case "UNLOCK TABLES":
-						unlockTables();break;
+						unlockTables(); break;
 					case "COMMIT":
-						commit();break;
+						commit(); break;
 					case "END":
-						end();break;
+						end(); break;
 					default: setAcknowledgement(message);
 					}
 				} catch (IOException err) {
-					//err.printStackTrace();
+					//TODO Server ran into a problem, shutting down
 					list.remove(this);
-					connected.remove(this.getClientIP());
-					
-					try {
-						in.close();
-						out.close();
-						clientSocket.close();
-					} catch(IOException e) {}
-					
+					connected.remove(getClientIP());
+					break; //Break out the loop;
 				}	
 			}
 			
-			/*try {
+			try {
 				clientSocket.close();
+				in.close();
+				out.close();
 			} catch (IOException e) {
-				// TODO Auto-generated catch block
+				// If something went wrong here, nothing else I can do
 				e.printStackTrace();
 			}
-			System.out.println("Socket closed.");*/
+			System.out.println("Socket closed.");
 		}
 		
 		private void end() {
 			System.out.println("END CHECK");
-			try {
-				new ResultFrame(query, String.valueOf(0), rs);
-			} catch (SQLException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
+			
 			go = false;
 			localTrans = null;
 		}
@@ -277,9 +273,7 @@ public class Server extends Thread{
 			try {
 				System.out.println("COMMIT CHECK");
 				db.commit();
-//				db.setAutoCommit(true);
 			} catch (SQLException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 		}
@@ -289,28 +283,22 @@ public class Server extends Thread{
 				System.out.println("UNLOCK CHECK");
 				db.prepareStatement("UNLOCK TABLES").executeQuery();
 			} catch (SQLException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 		}
 
 		private synchronized void ready() throws IOException {
-						
-			//out.writeUTF("READY");
-			System.out.print("pls");
 			setAcknowledgement("READY");
-			System.out.println("set");
 		}
 
 		private synchronized void doSQL(String parameter) throws IOException {
 			System.out.println("Executing SQL query");
 			try {
 				query = parameter;
-				rs = db.prepareStatement(parameter).executeQuery();
+				db.prepareStatement(parameter).executeQuery();
 				sqlQuery = true;
 				out.writeUTF("READY");
 			} catch (SQLException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 			System.out.println("Executed SQL query");
@@ -323,7 +311,6 @@ public class Server extends Thread{
 				System.out.println("Executed LOCK query");
 				out.writeUTF("LOCKED SUCCESSFUL");
 			} catch (SQLException e) {
-				// TODO Auto-generated catch block
 				out.writeUTF("LOCKED FAILED");
 				e.printStackTrace();
 			}
@@ -331,14 +318,13 @@ public class Server extends Thread{
 		}
 		
 		public String getClientIP(){
-			return clientSocket.getInetAddress().toString().substring(1);
+			return clientSocket.getInetAddress().getHostAddress(); //guise pls...
 		}
 		
 		public void send(String msg) {
 			try {
 				out.writeUTF(msg);
 			} catch (IOException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 		}
@@ -346,17 +332,16 @@ public class Server extends Thread{
 	}
 	
 	public synchronized void setAcknowledgement(String msg) {
-		
 		this.ack = msg;
-		if(localTrans != null)
-		localTrans.notifyTrans();
+
+		//tell transaction a reply has came back
+		if(localTrans != null) {
+			localTrans.notifyTrans();
+		}
 	}
 
 	public String getAcknowledgement() {
-		// TODO Auto-generated method stub
 		return ack;
-		
-		
 	}
 }
 

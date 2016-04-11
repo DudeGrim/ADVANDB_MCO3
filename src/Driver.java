@@ -6,6 +6,7 @@ import java.util.Scanner;
 
 import network.Server;
 import transaction.TransactionInterface;
+import view.InitializeFrame;
 import transaction.Transaction;
 
 
@@ -18,23 +19,23 @@ public class Driver {
 		}
 		Scanner sc = new Scanner(System.in);
 		Server server = null;
-		
+		InitializeFrame ui = new InitializeFrame();
 		System.out.println("[1]Central, [2]palawan or [3]marinduque?");
 		int choice =  sc.nextInt();
 		
 		switch(choice){
 		case 1:
-			server = new Server("db_hpq", choice);
+			//server = new Server("db_hpq", choice);
 			break;
 		case 2:
 //			System.out.print("Input Central IP:");
-			server = new Server("db_hpq_palawan", choice);
+			//server = new Server("db_hpq_palawan", choice);
 //			trans = new TransactionManager(TransactionInterface.DB_NAME, statements.toArray(new String[0]), tables.toArray(new String[0]), 
 //					Connection.TRANSACTION_READ_UNCOMMITTED, ip);
 			break;
 		case 3:
 //			System.out.print("Input Central IP:");
-			server = new Server("db_hpq_marinduque", choice);
+			//server = new Server("db_hpq_marinduque", choice);
 //			trans = new TransactionManager(TransactionInterface.DB_NAME, statements.toArray(new String[0]), tables.toArray(new String[0]), 
 //					Connection.TRANSACTION_READ_UNCOMMITTED, ip);
 			break;
@@ -55,6 +56,7 @@ public class Driver {
 		
 		server.start();
 		//trans.start();
+		
 		
 		
 	}
